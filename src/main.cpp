@@ -9,13 +9,13 @@ BufferedSerial pc(USBTX, USBRX, 115200); // Nucleoのシリアルポート
 
 DigitalIn button(BUTTON1);
 serial_unit serial(pc);
-PID steering_position_pid(7.55f, 0.0f, 0.0f, PID::Mode::POSITIONAL);
+PID steering_position_pid(4.55f, 0.0f, 0.000001f, PID::Mode::POSITIONAL);
 PID steering_velocity_pid(0.3f, 0.5f, 0.000001f, PID::Mode::VELOCITY);
 
 CAN can1(PA_11, PA_12, 1000000);
 CAN can2(PB_12, PB_13, 1000000);
 C610 DJI(can1);
-Amt212CV encoder(PA_9, PA_10, D6, 0x4z8);
+Amt212CV encoder(PA_9, PA_10, D6, 0x48);
 int32_t aa_position = 0;
 float stick_x = 0.00f, stick_y = 0.00f;
 
@@ -27,7 +27,7 @@ void pid_thread()
     auto pre_time = HighResClock::now();
     steering_position_pid.set_output_limits(-8000, 8000);
     steering_velocity_pid.set_output_limits(-10000, 10000);
-    steering_position_pid.set_deadband(50.0f);
+    steering_position_pid.set_deadband(200.0f);
     while (1)
     {
         auto now_time = HighResClock::now();
@@ -40,7 +40,7 @@ void pid_thread()
         pre_time = now_time;
         if (encoder.update())
         {
-            aa_position = encoder.get_position() + 1448;
+            aa_position = encoder.get_position();
         }
         else
         {
@@ -51,7 +51,7 @@ void pid_thread()
         {
             steering_velocity_pid.set_goal(0);
         }
-        DJI.set_power(1, steering_velocity_pid.do_pid(DJI.get_rpm(1)));
+        DJI.set_power(4, steering_velocity_pid.do_pid(DJI.get_rpm(4)));
 
         // PID制御ループ
         ThisThread::sleep_for(30ms);
@@ -76,7 +76,7 @@ int main()
         }
         DJI.send_message();
         // printf("AA Position: %ld\n", aa_position);
-        printf("position:%d,send_message:%d,goal_speed:%f\n", aa_position, DJI.get_rpm(1), steering_velocity_pid.get_goal());
+        printf("position:%d,send_message:%d,goal_speed:%f\n", aa_position, DJI.get_rpm(4), steering_velocity_pid.get_goal());
         ThisThread::sleep_for(30ms);
     }
 }

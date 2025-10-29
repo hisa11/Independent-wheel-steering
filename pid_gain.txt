@@ -1,0 +1,11 @@
+1:PID steering_position_pid(4.55f, 0.0f, 0.000001f, PID::Mode::POSITIONAL);
+PID steering_velocity_pid(0.3f, 0.5f, 0.000001f, PID::Mode::VELOCITY);
+
+3:
+PID steering_position_pid(4.55f, 0.0f, 0.000001f, PID::Mode::POSITIONAL);
+PID steering_velocity_pid(0.3f, 0.5f, 0.000001f, PID::Mode::VELOCITY);
+
+1:-380
+2:2844
+3:72
+4:3192
