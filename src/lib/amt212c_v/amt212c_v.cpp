@@ -41,39 +41,37 @@ bool Amt212CV::is_valid(uint16_t data) {
     return (k1 == k1_calc) && (k0 == k0_calc);
 }
 
-bool Amt212CV::read_angle(anglelib::Anglef& result, uint16_t& raw_ticks) {
+bool Amt212CV::read_angle(anglelib::Anglef& result, int16_t& delta_ticks) {
     flush();
     send(&addr, 1);
     uint16_t raw;
     if (!recv(&raw, 2, 300us)) return false;
     if (!is_valid(raw)) return false;
 
-    raw_ticks = raw & 0x3FFF;
+    uint16_t raw_ticks = raw & 0x3FFF;
     float new_rad = raw_ticks * ((2.0f * anglelib::PI) / 16384.0f);
     auto new_angle = anglelib::Anglef::from_rad(new_rad);
 
+    int16_t dt = raw_ticks - (ticks & 0x3FFF);
+    if (dt > 8192) dt -= 16384;
+    if (dt < -8192) dt += 16384;
+
+    delta_ticks = dt;
     result = new_angle;
     return true;
 }
 
 bool Amt212CV::update() {
     anglelib::Anglef raw_angle;
-    uint16_t raw_ticks;
-    if (!read_angle(raw_angle, raw_ticks)) return false;
+    int16_t dt;
+    if (!read_angle(raw_angle, dt)) return false;
 
     if (!initialized) {
         last_angle = raw_angle;
-        last_raw_ticks = raw_ticks;
         initialized = true;
         ticks = 0;
     } else {
-        // 前回のraw_ticksと今回のraw_ticksの差分を計算
-        int16_t dt = raw_ticks - last_raw_ticks;
-        if (dt > 8192) dt -= 16384;
-        if (dt < -8192) dt += 16384;
-        
         ticks += dt;
-        last_raw_ticks = raw_ticks;
     }
 
     switch (mode) {

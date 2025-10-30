@@ -68,14 +68,13 @@ private:
     anglelib::Anglef angle{};
     anglelib::Anglef last_angle{};
     int32_t ticks = 0;
-    uint16_t last_raw_ticks = 0;
     bool initialized = false;
     Mode mode = Mode::Wrapped;
 
     void flush();
     void send(const void* data, size_t len);
     bool recv(void* data, size_t len, std::chrono::microseconds timeout);
-    bool read_angle(anglelib::Anglef& result, uint16_t& raw_ticks);
+    bool read_angle(anglelib::Anglef& result, int16_t& delta_ticks);
     static bool is_valid(uint16_t data);
 };
 
