@@ -30,11 +30,15 @@ CAN can1(PA_11, PA_12, 1000000);
 CAN can2(PB_12, PB_13, 1000000);
 Mutex can2_mutex;  // can2へのアクセスを保護するミューテックス
 Mutex encoder_mutex;  // amt212c_v_positionへのアクセスを保護するミューテックス
+Mutex rs485_mutex;  // RS485バスへのアクセスを保護するミューテックス
 C610 DJI(can1);
-Amt212CV encoder0(PA_9, PA_10, D6, 0x48);
-Amt212CV encoder1(PA_9, PA_10, D6, 0x50);
-Amt212CV encoder2(PA_9, PA_10, D6, 0x5c);
-Amt212CV encoder3(PA_9, PA_10, D6, 0x58);
+// 共有するRS485バスとDEピンを1つだけ定義
+UnbufferedSerial rs485_bus(PA_9, PA_10, 2000000);
+DigitalOut rs485_de(D6);
+Amt212CV encoder0(rs485_bus, rs485_de, 0x48);
+Amt212CV encoder1(rs485_bus, rs485_de, 0x50);
+Amt212CV encoder2(rs485_bus, rs485_de, 0x5c);
+Amt212CV encoder3(rs485_bus, rs485_de, 0x58);
 int amt212c_v_error[4] = {1290, 6472, -6056, 2476};
 int amt212c_v_position[4] = {0, 0, 0, 0};
 float stick_x = 0.00f, stick_y = 0.00f, stick_r = 0.00f;
@@ -48,26 +52,57 @@ int16_t enc[4] = {0, 0, 0, 0};
 void encoder_update_thread()
 {
     Amt212CV *encoders_arr[4] = {&encoder0, &encoder1, &encoder2, &encoder3};
-    int current_encoder = 0;  // ラウンドロビンで更新するエンコーダーのインデックス
-    
+    int current_encoder = 0;
+    int debug_counter = 0;
+    int error_count[4] = {0, 0, 0, 0};
     while (1)
     {
-        // 1つのエンコーダーを更新
-        if (encoders_arr[current_encoder]->update())
+        // RS485バスへのアクセスを保護
+        rs485_mutex.lock();
+        bool update_success = encoders_arr[current_encoder]->update();
+        int new_position = 0;
+        if (update_success)
         {
-            int new_position = encoders_arr[current_encoder]->get_position() - amt212c_v_error[current_encoder];
-            
-            // アブソリュートエンコーダーの値をそのまま使用
+            new_position = encoders_arr[current_encoder]->get_position() - amt212c_v_error[current_encoder];
+            error_count[current_encoder] = 0;
+        }
+        else
+        {
+            error_count[current_encoder]++;
+            if (error_count[current_encoder] > 10)
+            {
+                error_count[current_encoder] = 0;
+                // ミューテックスを保持したままスリープ
+                ThisThread::sleep_for(2ms);
+            }
+        }
+        rs485_mutex.unlock();
+
+        // エンコーダーの値を更新
+        if (update_success)
+        {
             encoder_mutex.lock();
             amt212c_v_position[current_encoder] = new_position;
             encoder_mutex.unlock();
         }
-        
-        // 次のエンコーダーへ（ラウンドロビン）
+        // 次のエンコーダーへ
         current_encoder = (current_encoder + 1) % 4;
-        
-        // エンコーダー更新間隔（各エンコーダーは約7ms * 4 = 28ms周期で更新）
+        // 更新間隔
         ThisThread::sleep_for(7ms);
+        // デバッグ出力
+        if (++debug_counter >= 140)
+        {
+            debug_counter = 0;
+            encoder_mutex.lock();
+            char buffer[128];
+            snprintf(buffer, sizeof(buffer), "steering_positions: W0=%d, W1=%d, W2=%d, W3=%d\n",
+                     (int)amt212c_v_position[0],
+                     (int)amt212c_v_position[1],
+                     (int)amt212c_v_position[2],
+                     (int)amt212c_v_position[3]);
+            encoder_mutex.unlock();
+            // pc.write(buffer, strlen(buffer));
+        }
     }
 }
 
@@ -77,9 +112,9 @@ void sensor_thread()
     while (1)
     {
         // ミューテックスでcan2へのアクセスを保護
-        can2_mutex.lock();
+        // can2_mutex.lock();
         bool read_success = can2.read(enc_msg, 10);  // 10ms タイムアウトに短縮
-        can2_mutex.unlock();
+        // can2_mutex.unlock();
         
         if (read_success)
         {
@@ -233,10 +268,10 @@ void move_aa(std::string msg)
         // atan2f(vy, vx) を使い、「前」 (vx > 0, vy = 0) を 0 ラジアンとする
         float target_rad = atan2f(vy[i], vx[i]);
 
-        // c. 90°最適化ロジック
+        // c. 90°最適化ロジック（改良版：±π/2制限対応）
         int32_t current_pulse = current_positions[i];
         
-        // 目標パルス値を計算
+        // 目標パルス値を計算（-180°～180°の範囲）
         float target_pulse_raw = target_rad * PULSE_PER_RAD;
         
         // 現在位置を-180°～180°の範囲に正規化
@@ -245,10 +280,37 @@ void move_aa(std::string msg)
         // 目標位置も-180°～180°の範囲に正規化
         float target_pulse_normalized = remainderf(target_pulse_raw, PULSE_PER_ROTATION);
         
-        // 最短距離を計算
-        float delta_pulse = target_pulse_normalized - current_pulse_normalized;
+        // 目標角度を±90°範囲に収める（±180°反転で対応）
+        float target_pulse_adjusted = target_pulse_normalized;
+        float drive_direction = 1.0f;
         
-        // -180°～180°の範囲に収める
+        if (target_pulse_adjusted > PULSE_90_DEG)
+        {
+            // 90°～180° → -90°～0° に変換してタイヤ逆回転
+            target_pulse_adjusted -= PULSE_180_DEG;
+            drive_direction = -1.0f;
+        }
+        else if (target_pulse_adjusted < -PULSE_90_DEG)
+        {
+            // -180°～-90° → 0°～90° に変換してタイヤ逆回転
+            target_pulse_adjusted += PULSE_180_DEG;
+            drive_direction = -1.0f;
+        }
+        
+        // 正規化された角度間の最短距離を計算（現在位置も±90°に収める）
+        float current_pulse_adjusted = current_pulse_normalized;
+        if (current_pulse_adjusted > PULSE_90_DEG)
+        {
+            current_pulse_adjusted -= PULSE_180_DEG;
+        }
+        else if (current_pulse_adjusted < -PULSE_90_DEG)
+        {
+            current_pulse_adjusted += PULSE_180_DEG;
+        }
+        
+        float delta_pulse = target_pulse_adjusted - current_pulse_adjusted;
+        
+        // -180°～180°の範囲に収める（最短経路）
         if (delta_pulse > PULSE_180_DEG)
         {
             delta_pulse -= PULSE_PER_ROTATION;
@@ -258,46 +320,24 @@ void move_aa(std::string msg)
             delta_pulse += PULSE_PER_ROTATION;
         }
 
-        float optimized_delta_pulse;
-        float drive_direction = 1.0f;
-
-        if (fabsf(delta_pulse) <= PULSE_90_DEG)
+        // d. 最終目標値の計算（-πrad～πradの範囲に制限、計算上は±π/2に収まる）
+        // 正規化された現在位置に差分を加算
+        int32_t final_target_pulse = (int32_t)current_pulse_adjusted + (int32_t)delta_pulse;
+        
+        // 安全のため-180°～180°の範囲に制限（通常は±90°に収まる）
+        if (final_target_pulse > PULSE_180_DEG)
         {
-            // A. 差が±90°以内：そのまま
-            optimized_delta_pulse = delta_pulse;
-            drive_direction = 1.0f;
+            final_target_pulse = PULSE_180_DEG;
         }
-        else
+        else if (final_target_pulse < -PULSE_180_DEG)
         {
-            // B. 差が±90°を超える：180°反転し、モーターを逆回転
-            drive_direction = -1.0f;
-            if (delta_pulse > 0)
-            {
-                optimized_delta_pulse = delta_pulse - PULSE_180_DEG;
-            }
-            else
-            {
-                optimized_delta_pulse = delta_pulse + PULSE_180_DEG;
-            }
+            final_target_pulse = -PULSE_180_DEG;
         }
-
-        // d. 最終目標値の計算とハードウェアリミット適用
-        int32_t final_target_pulse = current_pulse + (int32_t)optimized_delta_pulse;
 
         // スティックが中央付近の場合、ステアリング角度は変更しない
         if (!is_moving)
         {
-            final_target_pulse = current_pulse; // 現在角度を維持
-        }
-
-        // ハードウェアリミット適用
-        if (final_target_pulse > HW_LIMIT_PLUS)
-        {
-            final_target_pulse = HW_LIMIT_PLUS;
-        }
-        else if (final_target_pulse < HW_LIMIT_MINUS)
-        {
-            final_target_pulse = HW_LIMIT_MINUS;
+            final_target_pulse = (int32_t)current_pulse_adjusted; // 現在角度を維持
         }
 
         float final_target_rpm = target_rpm * drive_direction;
@@ -387,9 +427,9 @@ void pid_thread()
         for (int i = 0; i < 4; i++)
         {
             DJI.set_power(i + 1, steering_velocity_pid[i].do_pid(DJI.get_rpm(i + 1)));
-            tire_power[i] = tire_pid[i].do_pid(enc_filtered[i]);
+            tire_power[i] = -tire_pid[i].do_pid(enc_filtered[i]);
         }
-
+        // pc.write("PID loop executed\n", 18);
         // PID制御ループ
         ThisThread::sleep_for(20ms);
     }
@@ -400,6 +440,7 @@ void led_thread()
     while (1)
     {
         led = !led;
+        // pc.write("LED toggled\n", 13);
         ThisThread::sleep_for(500ms);
     }
 }
@@ -408,7 +449,10 @@ int main()
 {
     // シリアルポートを非ブロッキングモードに設定（重要！）
     pc.set_blocking(false);
-    
+    // 共有バスの初期化
+    rs485_de = 0;
+    rs485_bus.set_blocking(false);
+
     for (int i = 0; i < 4; i++)
     {
         steering_position_pid[i].set_goal(0);
@@ -417,7 +461,7 @@ int main()
     encoder1.set_mode(Amt212CV::Mode::Continuous);
     encoder2.set_mode(Amt212CV::Mode::Continuous);
     encoder3.set_mode(Amt212CV::Mode::Continuous);
-    
+
     Thread thread;
     thread.start(serial_read);
     Thread encoder_thread_handle;
@@ -428,21 +472,13 @@ int main()
     sensor_thread_handle.start(sensor_thread);
     Thread led_thread_handle;
     led_thread_handle.start(led_thread);
-    
+
     while (1)
     {
         DJI.send_message();
-        printf("steering_positions: W0=%d, W1=%d, W2=%d, W3=%d\n",
-               amt212c_v_position[0],
-               amt212c_v_position[1],
-               amt212c_v_position[2],
-               amt212c_v_position[3]);
-        // ミューテックスでcan2へのアクセスを保護
-        can2_mutex.lock();
+        // ...existing code...
         CANMessage msg(4, (const uint8_t *)tire_power, 8);
         can2.write(msg);
-        can2_mutex.unlock();
-        
         ThisThread::sleep_for(30ms);
     }
 }
