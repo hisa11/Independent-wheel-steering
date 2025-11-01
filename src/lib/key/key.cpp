@@ -23,88 +23,90 @@ bool R3 = false;
 
 
 void key_puress(std::string &msg) {
-    if (msg == "ci:p")
+    // ROS2のフォーマットに対応: "button:pressing" または "button:no_pressing"
+    if (msg == "circle:pressing")
         Circle = true;
-    else if (msg == "ci:no_p")
+    else if (msg == "circle:no_pressing")
         Circle = false;
 
-    if (msg == "cr:p")
+    if (msg == "cross:pressing")
         Cross = true;
-    else if (msg == "cr:no_p")
+    else if (msg == "cross:no_pressing")
         Cross = false;
 
-    if (msg == "sq:p")
+    if (msg == "square:pressing")
         Square = true;
-    else if (msg == "sq:no_p")
+    else if (msg == "square:no_pressing")
         Square = false;
 
-    if (msg == "tri:p")
+    if (msg == "triangle:pressing")
         Triangle = true;
-    else if (msg == "tri:no_p")
+    else if (msg == "triangle:no_pressing")
         Triangle = false;
 
-    if (msg == "L1:p")
+    if (msg == "L1:pressing")
         L1 = true;
-    else if (msg == "L1:no_p")
+    else if (msg == "L1:no_pressing")
         L1 = false;
 
-    if (msg == "R1:p")
+    if (msg == "R1:pressing")
         R1 = true;
-    else if (msg == "R1:no_p")
+    else if (msg == "R1:no_pressing")
         R1 = false;
 
-    if (msg == "L2:p")
+    if (msg == "L2:pressing")
         L2 = true;
-    else if (msg == "L2:no_p")
+    else if (msg == "L2:no_pressing")
         L2 = false;
 
-    if (msg == "R2:p")
+    if (msg == "R2:pressing")
         R2 = true;
-    else if (msg == "R2:no_p")
+    else if (msg == "R2:no_pressing")
         R2 = false;
 
-    if (msg == "SH:p")
+    if (msg == "SHARE:pressing")
         SHARE = true;
-    else if (msg == "SH:no_p")
+    else if (msg == "SHARE:no_pressing")
         SHARE = false;
 
-    if (msg == "OP:p")
+    if (msg == "OPTIONS:pressing")
         OPTION = true;
-    else if (msg == "OP:no_p")
+    else if (msg == "OPTIONS:no_pressing")
         OPTION = false;
 
-    if (msg == "PS:p")
+    if (msg == "PS:pressing")
         PS = true;
-    else if (msg == "PS:no_p")
+    else if (msg == "PS:no_pressing")
         PS = false;
 
-    if (msg == "u:p")
+    if (msg == "up:pressing")
         Up = true;
-    else if (msg == "u:no_p")
+    else if (msg == "up:no_pressing")
         Up = false;
 
-    if (msg == "d:p")
+    if (msg == "down:pressing")
         Down = true;
-    else if (msg == "d:no_p")
+    else if (msg == "down:no_pressing")
         Down = false;
 
-    if (msg == "l:p")
+    if (msg == "left:pressing")
         Left = true;
-    else if (msg == "l:no_p")
+    else if (msg == "left:no_pressing")
         Left = false;
 
-    if (msg == "r:p")
+    if (msg == "right:pressing")
         Right = true;
-    else if (msg == "r:no_p")
+    else if (msg == "right:no_pressing")
         Right = false;
 
-    if (msg == "L3:p")
+    // L3とR3はROS2側で送信されていないため、デフォルトのまま
+    if (msg == "L3:pressing")
         L3 = true;
-    else if (msg == "L3:no_p")
+    else if (msg == "L3:no_pressing")
         L3 = false;
 
-    if (msg == "R3:p")
+    if (msg == "R3:pressing")
         R3 = true;
-    else if (msg == "R3:no_p")
+    else if (msg == "R3:no_pressing")
         R3 = false;
 }
