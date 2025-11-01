@@ -5,7 +5,12 @@
           "platform.minimal-printf-enable-64-bit": true,
           "platform.minimal-printf-enable-floating-point": true,
           "platform.minimal-printf-set-floating-point-max-decimals": 6,
-          "platform.stdio-baud-rate": 115200
+          "platform.stdio-baud-rate": 115200,
+          "target.mbed-os-clk-src": "USE_PLL_HSE_XTAL",
+          "target.lse-available": false
+      },
+      "NUCLEO_F446RE": {
+          "target.clock-source": "USE_PLL_HSE_XTAL|USE_PLL_HSI"
       }
   }
 } 

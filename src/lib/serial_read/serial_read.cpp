@@ -67,6 +67,7 @@ void serial_read() {
                 key_puress(msg);
             }
         }
-        // ThisThread::sleep_for(10ms);
+        // メッセージがない場合は短時間スリープしてCPUを解放
+        ThisThread::sleep_for(1ms);
     }
 }

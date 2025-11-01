@@ -1,9 +1,12 @@
+
+
 #include "amt212c_v.hpp"
 
-Amt212CV::Amt212CV(PinName tx, PinName rx, PinName dere, uint8_t address, int baud)
-    : rs485(tx, rx, baud), de(dere), addr(address) {
-    de = 0;
-    rs485.set_blocking(false);
+// 共有バス・DEピンを参照で受け取る
+Amt212CV::Amt212CV(UnbufferedSerial& rs485_bus, DigitalOut& de_pin, uint8_t address, int baud)
+    : rs485(rs485_bus), de(de_pin), addr(address) {
+    // de = 0; // 初期化はmain.cppで一度だけ行う
+    // rs485.set_blocking(false); // 初期化はmain.cppで一度だけ行う
     timer.start();
 }
 
@@ -15,7 +18,7 @@ void Amt212CV::flush() {
 void Amt212CV::send(const void* data, size_t len) {
     de = 1;
     rs485.write(data, len);
-    wait_us(5);
+    wait_us(5); // RS485ドライバチップの仕様による
     de = 0;
 }
 

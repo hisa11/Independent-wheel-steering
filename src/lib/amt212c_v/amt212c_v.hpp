@@ -52,15 +52,16 @@ public:
         Continuous  // -inf ~ +inf
     };
 
-    Amt212CV(PinName tx, PinName rx, PinName dere, uint8_t address, int baud = 2000000);
+    // 共有バス・DEピンを参照で受け取る
+    Amt212CV(UnbufferedSerial& rs485_bus, DigitalOut& de_pin, uint8_t address, int baud = 2000000);
     bool update();
     anglelib::Anglef get_angle() const;
     int32_t get_position() const;
     void set_mode(Mode m);
 
 private:
-    UnbufferedSerial rs485;
-    DigitalOut de;
+    UnbufferedSerial& rs485;
+    DigitalOut& de;
     Timer timer;
     uint8_t addr;
     float scale = 1.0f;
