@@ -30,7 +30,7 @@ CAN can1(PA_11, PA_12, 1000000);
 CAN can2(PB_12, PB_13, 1000000);
 Mutex can2_mutex;  // can2へのアクセスを保護するミューテックス
 Mutex encoder_mutex;  // amt212c_v_positionへのアクセスを保護するミューテックス
-// Mutex rs485_mutex;  // RS485バスへのアクセスを保護するミューテックス（不要なので削除）
+Mutex rs485_mutex;  // RS485バスへのアクセスを保護するミューテックス
 C610 DJI(can1);
 // 共有するRS485バスとDEピンを1つだけ定義
 UnbufferedSerial rs485_bus(PA_9, PA_10, 2000000);
@@ -57,6 +57,8 @@ void encoder_update_thread()
     int error_count[4] = {0, 0, 0, 0};
     while (1)
     {
+        // RS485バスへのアクセスを保護
+        rs485_mutex.lock();
         bool update_success = encoders_arr[current_encoder]->update();
         int new_position = 0;
         if (update_success)
@@ -70,9 +72,11 @@ void encoder_update_thread()
             if (error_count[current_encoder] > 10)
             {
                 error_count[current_encoder] = 0;
+                // ミューテックスを保持したままスリープ
                 ThisThread::sleep_for(2ms);
             }
         }
+        rs485_mutex.unlock();
 
         // エンコーダーの値を更新
         if (update_success)
@@ -85,20 +89,20 @@ void encoder_update_thread()
         current_encoder = (current_encoder + 1) % 4;
         // 更新間隔
         ThisThread::sleep_for(7ms);
-        // デバッグ出力（コメントアウト済み）
-        // if (++debug_counter >= 140)
-        // {
-        //     debug_counter = 0;
-        //     encoder_mutex.lock();
-        //     char buffer[128];
-        //     snprintf(buffer, sizeof(buffer), "steering_positions: W0=%d, W1=%d, W2=%d, W3=%d\n",
-        //              (int)amt212c_v_position[0],
-        //              (int)amt212c_v_position[1],
-        //              (int)amt212c_v_position[2],
-        //              (int)amt212c_v_position[3]);
-        //     encoder_mutex.unlock();
-        //     // pc.write(buffer, strlen(buffer));
-        // }
+        // デバッグ出力
+        if (++debug_counter >= 140)
+        {
+            debug_counter = 0;
+            encoder_mutex.lock();
+            char buffer[128];
+            snprintf(buffer, sizeof(buffer), "steering_positions: W0=%d, W1=%d, W2=%d, W3=%d\n",
+                     (int)amt212c_v_position[0],
+                     (int)amt212c_v_position[1],
+                     (int)amt212c_v_position[2],
+                     (int)amt212c_v_position[3]);
+            encoder_mutex.unlock();
+            // pc.write(buffer, strlen(buffer));
+        }
     }
 }
 
@@ -462,8 +466,6 @@ int main()
     thread.start(serial_read);
     Thread encoder_thread_handle;
     encoder_thread_handle.start(encoder_update_thread);
-    // 優先度を最高に設定
-    encoder_thread_handle.set_priority(osPriorityRealtime);
     Thread pid_thread_handle;
     pid_thread_handle.start(pid_thread);
     Thread sensor_thread_handle;
