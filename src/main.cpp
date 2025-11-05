@@ -37,9 +37,9 @@ C610 DJI(can1);
 Rs485 rs485{PA_9, PA_10, (int)2e6, D6};
 Amt21 encoder0{0x48, rs485};
 Amt21 encoder1{0x54, rs485};
-Amt21 encoder2{0x5c, rs485};
+Amt21 encoder2{0x5C, rs485};
 Amt21 encoder3{0x58, rs485};
-int amt212c_v_error[4] = {321, -2649, -1526, 622};
+int amt212c_v_error[4] = {321, -1471, -1526, 622};
 int amt212c_v_position[4] = {0, 0, 0, 0};
 float stick_x = 0.00f, stick_y = 0.00f, stick_r = 0.00f;
 int tire_power[4] = {0, 0, 0, 0};
@@ -356,7 +356,7 @@ void pid_thread()
     {
         steering_position_pid[i].set_output_limits(-8000, 8000);
         steering_velocity_pid[i].set_output_limits(-10000, 10000);
-        steering_position_pid[i].set_deadband(50.0f);
+        steering_position_pid[i].set_deadband(20.0f);
         tire_pid[i].set_output_limits(-20000, 20000);
     }
     while (1)
@@ -462,9 +462,9 @@ int main()
         // pc.write(buffer, strlen(buffer));
         char buffer2[128];
         snprintf(buffer2, sizeof(buffer2), "tire4:pos:%d,goal:%d,power:%d\n",
-                 (int)amt212c_v_position[3],
-                 (int)steering_position_pid[3].get_goal(),
-                 (int)steering_velocity_pid[3].get_goal());
+                 (int)amt212c_v_position[2],
+                 (int)steering_position_pid[2].get_goal(),
+                 (int)steering_velocity_pid[2].get_goal());
         pc.write(buffer2, strlen(buffer2));
         encoder_mutex.unlock();
         ThisThread::sleep_for(30ms);
