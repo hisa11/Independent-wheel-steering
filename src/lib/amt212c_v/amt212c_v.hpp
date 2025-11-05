@@ -2,81 +2,52 @@
 #define AMT212C_V_HPP
 
 #include <mbed.h>
-#include <cmath>
+#include "Rs485.h"
 
-namespace anglelib {
+struct Amt21 {
+  static constexpr int rotate = 4096;
 
-constexpr float PI = 3.14159265358979323846f;
-constexpr float TAU = 2.0f * PI;
+  uint8_t address;
+  int32_t pos;
+  uint16_t pre_pos;
+  Rs485& rs485;
 
-template<typename T>
-constexpr bool is_equal_approx(T a, T b) {
-    constexpr T EPS = 1e-5f;
-    return std::abs(a - b) < EPS;
-}
+  Amt21(uint8_t addr, Rs485& rs485_bus) : address(addr), pos(0), pre_pos(0), rs485(rs485_bus) {}
 
-template<typename T>
-constexpr T wrapf(T value, T min, T max) {
-    T range = max - min;
-    if (is_equal_approx(range, T(0))) return min;
-    T result = value - range * std::floor((value - min) / range);
-    return is_equal_approx(result, max) ? min : result;
-}
+  bool request_pos() {
+    rs485.uart_transmit({address});
+    uint16_t now_pos;
+    bool received = rs485.uart_receive(&now_pos, sizeof(now_pos), 10ms);
+    if(received && is_valid(now_pos)) {
+      now_pos = (now_pos & 0x3fff) >> 2;
+      int16_t diff = now_pos - pre_pos;
+      if(diff > rotate / 2) {
+        diff -= rotate;
+      } else if(diff < -rotate / 2) {
+        diff += rotate;
+      }
+      pos += diff;
+      pre_pos = now_pos;
+      return true;
+    }
+    return false;
+  }
 
-template<typename Rep>
-struct Angle {
-    Rep value;
-    Angle() : value(0) {}
-    explicit Angle(Rep rad) : value(rad) {}
+  void request_reset() {
+    uint8_t cmd[2] = {static_cast<uint8_t>(address + 2), 0x75};
+    rs485.uart_transmit(cmd);
+  }
 
-    static Angle from_deg(Rep deg) { return Angle(deg * (TAU / 360)); }
-    static Angle from_rad(Rep rad) { return Angle(rad); }
-
-    Rep rad() const { return value; }
-    Rep deg() const { return value * (360.0f / TAU); }
-
-    Angle operator+(const Angle& rhs) const { return Angle(value + rhs.value); }
-    Angle operator-(const Angle& rhs) const { return Angle(value - rhs.value); }
-    Angle operator*(Rep rhs) const { return Angle(value * rhs); }
-    Angle abs() const { return Angle(std::abs(value)); }
+  static bool is_valid(uint16_t raw_data) {
+    bool k1 = raw_data >> 15;
+    bool k0 = raw_data >> 14 & 1;
+    raw_data <<= 2;
+    do {
+      k1 ^= raw_data & 0x8000;
+      k0 ^= (raw_data <<= 1) & 0x8000;
+    } while(raw_data <<= 1);
+    return k0 && k1;
+  }
 };
 
-using Anglef = Angle<float>;
-
-} // namespace anglelib
-
-class Amt212CV {
-public:
-    enum class Mode {
-        Wrapped,  // 0 ~ 16383 ticks, 0 ~ 2pi radians
-        Continuous  // -inf ~ +inf
-    };
-
-    // 共有バス・DEピンを参照で受け取る
-    Amt212CV(UnbufferedSerial& rs485_bus, DigitalOut& de_pin, uint8_t address, int baud = 2000000);
-    bool update();
-    anglelib::Anglef get_angle() const;
-    int32_t get_position() const;
-    void set_mode(Mode m);
-
-private:
-    UnbufferedSerial& rs485;
-    DigitalOut& de;
-    Timer timer;
-    uint8_t addr;
-    float scale = 1.0f;
-    anglelib::Anglef offset = anglelib::Anglef::from_rad(0.0f);
-    anglelib::Anglef angle{};
-    anglelib::Anglef last_angle{};
-    int32_t ticks = 0;
-    bool initialized = false;
-    Mode mode = Mode::Wrapped;
-
-    void flush();
-    void send(const void* data, size_t len);
-    bool recv(void* data, size_t len, std::chrono::microseconds timeout);
-    bool read_angle(anglelib::Anglef& result, int16_t& delta_ticks);
-    static bool is_valid(uint16_t data);
-};
-
-#endif // AMT212C_V_HPP
+#endif
