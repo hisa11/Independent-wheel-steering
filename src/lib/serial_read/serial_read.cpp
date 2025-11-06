@@ -97,10 +97,23 @@ bool serial_unit::get_message(std::string &msg)
 
 
 void serial_read() {
+    uint32_t skip_count = 0;  // â€» ã‚¹ã‚­ãƒƒãƒ—ã‚«ã‚¦ãƒ³ã‚¿ãƒ¼
     while (1) {
         std::string msg;
         if (serial.get_message(msg)) {
             if (!msg.empty()) {
+                // â€» å…¥åŠ›ãŒ0ã®å ´åˆã€90%ã®ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã‚'ã‚¹ã‚­ãƒƒãƒ—ã—ã¦è² è·è»½æ¸›
+                if (msg.find("n:0.00:0.00:0.00") != std::string::npos) {
+                    skip_count++;
+                    if (skip_count % 10 != 0) {  // 10å›žã«1å›žã ã'å‡¦ç†
+                        ThisThread::sleep_for(50ms);
+                        continue;
+                    }
+                }
+                else {
+                    skip_count = 0;  // éžã‚¼ãƒ­å…¥åŠ›ã®æ™‚ã¯ãƒªã‚»ãƒƒãƒˆ
+                }
+                
                 if (msg[0] == 'n') {
                     move_aa(msg);
                 } else {

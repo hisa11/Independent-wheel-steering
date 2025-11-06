@@ -6,26 +6,29 @@
 #include "c610.hpp"
 #include "Rs485.h"
 
-BufferedSerial pc(USBTX, USBRX, 115200); // Nucleoã®ã‚·ãƒªã‚¢ãƒ«ãƒãƒ¼ãƒˆ
+// â€» Watchdogã‚¿ã‚¤ãƒžãƒ¼ã®ã‚¤ãƒ³ã‚¯ãƒ«ãƒ¼ãƒ‰
+Watchdog &watchdog = Watchdog::get_instance();
+
+BufferedSerial pc(USBTX, USBRX, 115200); // Nucleoã®ã‚·ãƒªã‚¢ãƒ«ãƒãƒ¼ãƒˆ
 
 DigitalIn button(BUTTON1);
 DigitalOut led(LED1);
 serial_unit serial(pc);
 PID steering_position_pid[4] = {
-    PID(7.55, 0.0, 0.000001, PID::Mode::POSITIONAL),
-    PID(7.55, 0.0, 0.000001, PID::Mode::POSITIONAL),
-    PID(7.55, 0.0, 0.000001, PID::Mode::POSITIONAL),
-    PID(7.55, 0.0, 0.000001, PID::Mode::POSITIONAL)};
+    PID(7.55, 0.0, 0.01, PID::Mode::POSITIONAL),
+    PID(7.55, 0.0, 0.01, PID::Mode::POSITIONAL),
+    PID(7.55, 0.0, 0.01, PID::Mode::POSITIONAL),
+    PID(7.55, 0.0, 0.01, PID::Mode::POSITIONAL)};
 PID steering_velocity_pid[4] = {
-    PID(0.30, 0.5, 0.000001, PID::Mode::VELOCITY),
-    PID(0.30, 0.5, 0.000001, PID::Mode::VELOCITY),
-    PID(0.30, 0.5, 0.000001, PID::Mode::VELOCITY),
-    PID(0.30, 0.5, 0.000001, PID::Mode::VELOCITY)};
+    PID(0.30, 0.5, 0.0001, PID::Mode::VELOCITY),
+    PID(0.30, 0.5, 0.0001, PID::Mode::VELOCITY),
+    PID(0.30, 0.5, 0.0001, PID::Mode::VELOCITY),
+    PID(0.30, 0.5, 0.0001, PID::Mode::VELOCITY)};
 PID tire_pid[4] = {
-    PID(1.10, 0.5, 0.000001, PID::Mode::VELOCITY),
-    PID(1.10, 0.5, 0.000001, PID::Mode::VELOCITY),
-    PID(1.10, 0.5, 0.000001, PID::Mode::VELOCITY),
-    PID(1.10, 0.5, 0.000001, PID::Mode::VELOCITY)};
+    PID(0.75, 0.9, 0.01, PID::Mode::VELOCITY),
+    PID(0.75, 0.9, 0.01, PID::Mode::VELOCITY),
+    PID(0.75, 0.9, 0.01, PID::Mode::VELOCITY),
+    PID(0.75, 0.9, 0.01, PID::Mode::VELOCITY)};
 
 CAN can1(PA_11, PA_12, 1000000);
 CAN can2(PB_12, PB_13, 1000000);
@@ -39,10 +42,10 @@ Amt21 encoder0{0x48, rs485};
 Amt21 encoder1{0x54, rs485};
 Amt21 encoder2{0x5C, rs485};
 Amt21 encoder3{0x58, rs485};
-int amt212c_v_error[4] = {321, -1471, -1526, 622};
+int amt212c_v_error[4] = {321, -1668, -1526, 622};
 int amt212c_v_position[4] = {0, 0, 0, 0};
 float stick_x = 0.00f, stick_y = 0.00f, stick_r = 0.00f;
-int tire_power[4] = {0, 0, 0, 0};
+int16_t tire_power[4] = {0, 0, 0, 0};
 
 const float ALPHA = 0.8f;                         // ãƒ­ãƒ¼ãƒ‘ã‚¹ãƒ•ã‚£ãƒ«ã‚¿ä¿‚æ•° (0.0-1.0, å°ã•ã„ã»ã©æ»‘ã‚‰ã‹)
 float enc_filtered[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // ãƒ•ã‚£ãƒ«ã‚¿æ¸ˆã¿ã‚¨ãƒ³ã‚³ãƒ¼ãƒ€ãƒ¼å€¤
@@ -69,14 +72,15 @@ void encoder_update_thread()
         else
         {
             error_count[current_encoder]++;
-            if (error_count[current_encoder] > 10)
-            {
-                error_count[current_encoder] = 0;
-                // ãƒŸãƒ¥ãƒ¼ãƒ†ãƒƒã‚¯ã‚¹ã‚'ä¿æŒã—ãŸã¾ã¾ã‚¹ãƒªãƒ¼ãƒ—
-                ThisThread::sleep_for(2ms);
-            }
         }
-        rs485_mutex.unlock();
+        rs485_mutex.unlock(); // â€» ãƒŸãƒ¥ãƒ¼ãƒ†ãƒƒã‚¯ã‚¹ã‚'å…ˆã«è§£æ"¾
+        
+        // ã‚¨ãƒ©ãƒ¼ãŒå¤šã„å ´åˆã¯ãƒŸãƒ¥ãƒ¼ãƒ†ãƒƒã‚¯ã‚¹å¤–ã§ã‚¹ãƒªãƒ¼ãƒ—
+        if (error_count[current_encoder] > 10)
+        {
+            error_count[current_encoder] = 0;
+            ThisThread::sleep_for(2ms);
+        }
 
         // ã‚¨ãƒ³ã‚³ãƒ¼ãƒ€ãƒ¼ã®å€¤ã‚'æ›´æ–°
         if (update_success)
@@ -154,16 +158,33 @@ void move_aa(std::string msg)
     const float L = 0.5f; // ä¸­å¿ƒã®Xè»¸(å‰å¾Œ)ã‹ã‚‰ãƒ›ã‚¤ãƒ¼ãƒ«ã¾ã§ã®è·é›¢
     const float W = 0.5f; // ä¸­å¿ƒã®Yè»¸(å·¦å³)ã‹ã‚‰ãƒ›ã‚¤ãƒ¼ãƒ«ã¾ã§ã®è·é›¢
 
-    // --- 1. ã‚¹ãƒ†ã‚£ãƒƒã‚¯å…¥åŠ›ã®ãƒ‘ãƒ¼ã‚¹ã¨ãƒ‡ãƒƒãƒ‰ãƒãƒ³ãƒ‰ ---
+    // --- 1. ã‚¹ãƒ†ã‚£ãƒƒã‚¯å…¥åŠ›ã®ãƒ'ãƒ¼ã‚¹ã¨ãƒ‡ãƒƒãƒ‰ãƒãƒ³ãƒ‰ ---
     msg.erase(0, 2);
     std::vector<double> joys_d = to_numbers(msg);
     std::vector<float> joys(joys_d.begin(), joys_d.end());
+    
+    // â€» æ—©æœŸãƒªã‚¿ãƒ¼ãƒ³ãƒã‚§ãƒƒã‚¯: å…¥åŠ›ãŒã™ã¹ã¦0ã®å ´åˆã¯è¨ˆç®—ã‚'ã‚¹ã‚­ãƒƒãƒ—
+    bool all_zero = true;
     for (auto &joy : joys)
     {
         if (joy > -0.08 && joy < 0.08)
         {
-            joy = 0.0;
+            joy = 0.0f;
         }
+        else
+        {
+            all_zero = false;
+        }
+    }
+    
+    // ã™ã¹ã¦ã®å…¥åŠ›ãŒ0ã®å ´åˆã¯PIDç›®æ¨™ã‚'0ã«è¨­å®šã—ã¦çµ‚äº†
+    if (all_zero)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            tire_pid[i].set_goal(0.0f);
+        }
+        return; // â€» æ—©æœŸãƒªã‚¿ãƒ¼ãƒ³ã§è¨ˆç®—è² è·è»½æ¸›
     }
     // ãƒ­ãƒœãƒƒãƒˆåº§æ¨™ç³»ã«ãƒžãƒƒãƒ”ãƒ³ã‚°
     float Vx_base = joys[1]; // stick_y: å‰å¾Œ (Xè»¸)
@@ -185,22 +206,22 @@ void move_aa(std::string msg)
     // ã—ãŸãŒã£ã¦:
     // Vx_wheel = Vx_base + Ï‰ * (-y_wheel)  (å›žè»¢ã«ã‚ˆã‚‹å‰å¾Œæ–¹å‘ã®é€Ÿåº¦)
     // Vy_wheel = Vy_base + Ï‰ * x_wheel     (å›žè»¢ã«ã‚ˆã‚‹å·¦å³æ–¹å‘ã®é€Ÿåº¦)
-
+    
     // ãƒ›ã‚¤ãƒ¼ãƒ«0: ã‚¿ã‚¤ãƒ¤1 = å·¦å‰ (Front Left) (x=+L, y=+W)
     float vx_0 = Vx_base + Omega * (-W); // Vx + Ï‰*(-W)
-    float vy_0 = Vy_base + Omega * L;    // Vy + Ï‰*(+L)
+    float vy_0 = Vy_base + Omega * (-L);    // Vy + Ï‰*(+L)
 
     // ãƒ›ã‚¤ãƒ¼ãƒ«1: ã‚¿ã‚¤ãƒ¤2 = å·¦å¾Œã‚ (Rear Left) (x=-L, y=+W)
     float vx_1 = Vx_base + Omega * (-W); // Vx + Ï‰*(-W)
-    float vy_1 = Vy_base + Omega * (-L); // Vy + Ï‰*(-L)
+    float vy_1 = Vy_base + Omega * L;    // Vy + Ï‰*(+L)
 
     // ãƒ›ã‚¤ãƒ¼ãƒ«2: ã‚¿ã‚¤ãƒ¤3 = å³å¾Œã‚ (Rear Right) (x=-L, y=-W)
-    float vx_2 = Vx_base + Omega * W;    // Vx + Ï‰*(+W)
-    float vy_2 = Vy_base + Omega * (-L); // Vy + Ï‰*(-L)
+    float vx_2 = Vx_base + Omega * W; // Vx + Ï‰*(-W)
+    float vy_2 = Vy_base + Omega * L; // Vy + Ï‰*(-L)
 
     // ãƒ›ã‚¤ãƒ¼ãƒ«3: ã‚¿ã‚¤ãƒ¤4 = å³å‰ (Front Right) (x=+L, y=-W)
-    float vx_3 = Vx_base + Omega * W; // Vx + Ï‰*(+W)
-    float vy_3 = Vy_base + Omega * L; // Vy + Ï‰*(+L)
+    float vx_3 = Vx_base + Omega * W;    // Vx + Ï‰*(+W)
+    float vy_3 = Vy_base + Omega * (-L); // Vy + Ï‰*(-L)
 
     // è¨ˆç®—ã•ã‚ŒãŸé€Ÿåº¦ãƒ™ã‚¯ãƒˆãƒ«ã‚’é…åˆ—ã«æ ¼ç´
     float vx[4] = {vx_0, vx_1, vx_2, vx_3};
@@ -384,13 +405,11 @@ void pid_thread()
         encoder_mutex.unlock();
 
         // ハードウェアリミットチェック (-1000 ~ 1000, 緊急停止 ±1500)
-        bool emergency_stop = false;
         for (int i = 0; i < 4; i++)
         {
             // ±1500を超えたら緊急停止
             if (local_encoder_positions[i] > 1500 || local_encoder_positions[i] < -1500)
             {
-                emergency_stop = true;
                 steering_position_pid[i].reset();
                 steering_velocity_pid[i].reset();
                 steering_velocity_pid[i].set_goal(0);
@@ -402,7 +421,7 @@ void pid_thread()
         {
             steering_velocity_pid[i].set_goal(-steering_position_pid[i].do_pid(local_encoder_positions[i]));
             DJI.set_power(i + 1, steering_velocity_pid[i].do_pid(DJI.get_rpm(i + 1)));
-            tire_power[i] = -tire_pid[i].do_pid(enc_filtered[i]);
+            tire_power[i] = tire_pid[i].do_pid(enc_filtered[i]);
         }
         // pc.write("PID loop executed\n", 18);
         // PIDåˆ¶å¾¡ãƒ«ãƒ¼ãƒ—
@@ -422,7 +441,10 @@ void led_thread()
 
 int main()
 {
-    // ã‚·ãƒªã‚¢ãƒ«ãƒãƒ¼ãƒˆã‚’éžãƒ–ãƒ­ãƒƒã‚­ãƒ³ã‚°ãƒ¢ãƒ¼ãƒ‰ã«è¨­å®šï¼ˆé‡è¦ï¼ï¼‰
+    // â€» Watchdogã‚¿ã‚¤ãƒžãƒ¼ã‚'æœ‰åŠ¹åŒ–ï¼ˆ5ç§'ã§ã‚¿ã‚¤ãƒ ã‚¢ã‚¦ãƒˆï¼‰
+    watchdog.start(5000);  // 5000ms = 5ç§'
+    
+    // ã‚·ãƒªã‚¢ãƒ«ãƒãƒ¼ãƒˆã‚'éžãƒ–ãƒ­ãƒƒã‚­ãƒ³ã‚°ãƒ¢ãƒ¼ãƒ‰ã«è¨­å®šï¼ˆé‡è¦ï¼ï¼‰
     pc.set_blocking(false);
 
     // ã‚·ãƒªã‚¢ãƒ«é€šä¿¡ã‚'ã‚¤ãƒ™ãƒ³ãƒˆæ–¹å¼ã§åˆæœŸåŒ–
@@ -433,19 +455,22 @@ int main()
         steering_position_pid[i].set_goal(0);
     }
 
-    Thread thread(osPriorityHigh);
+    Thread thread(osPriorityNormal, 4096);  // â€» ã‚¹ã‚¿ãƒƒã‚¯ã‚µã‚¤ã‚ºå¢—å ` (ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆ4KB)
     thread.start(serial_read);
-    Thread encoder_thread_handle(osPriorityRealtime);
+    Thread encoder_thread_handle(osPriorityHigh, 2048);  // â€» Realtimeã‹ã‚‰Highã«å¤‰æ›´
     encoder_thread_handle.start(encoder_update_thread);
-    Thread pid_thread_handle(osPriorityHigh);
+    Thread pid_thread_handle(osPriorityHigh, 4096);  // â€» ã‚¹ã‚¿ãƒƒã‚¯ã‚µã‚¤ã‚ºå¢—å `
     pid_thread_handle.start(pid_thread);
-    Thread sensor_thread_handle(osPriorityHigh);
+    Thread sensor_thread_handle(osPriorityNormal, 2048);  // â€» ã‚¹ã‚¿ãƒƒã‚¯ã‚µã‚¤ã‚ºæŒ‡å®š
     sensor_thread_handle.start(sensor_thread);
-    Thread led_thread_handle(osPriorityLow);
+    Thread led_thread_handle(osPriorityLow, 1024);  // â€» ã‚¹ã‚¿ãƒƒã‚¯ã‚µã‚¤ã‚ºæŒ‡å®š
     led_thread_handle.start(led_thread);
 
     while (1)
     {
+        // â€» Watchdogã‚'å®šæœŸçš„ã«ãƒªãƒ•ãƒ¬ãƒƒã‚·ãƒ¥
+        watchdog.kick();
+        
         DJI.send_message();
         // ...existing code...
         CANMessage msg(4, (const uint8_t *)tire_power, 8);
@@ -453,19 +478,19 @@ int main()
         can2.write(msg);
         can2_mutex.unlock();
         encoder_mutex.lock();
-        // char buffer[128];
-        // snprintf(buffer, sizeof(buffer), "steering_positions: W0=%d, W1=%d, W2=%d, W3=%d\n",
-        //          (int)amt212c_v_position[0],
-        //          (int)amt212c_v_position[1],
-        //          (int)amt212c_v_position[2],
-        //          (int)amt212c_v_position[3]);
-        // pc.write(buffer, strlen(buffer));
-        char buffer2[128];
-        snprintf(buffer2, sizeof(buffer2), "tire4:pos:%d,goal:%d,power:%d\n",
+        char buffer[128];
+        snprintf(buffer, sizeof(buffer), "steering_positions: W0=%d, W1=%d, W2=%d, W3=%d\n",
+                 (int)amt212c_v_position[0],
+                 (int)amt212c_v_position[1],
                  (int)amt212c_v_position[2],
-                 (int)steering_position_pid[2].get_goal(),
-                 (int)steering_velocity_pid[2].get_goal());
-        pc.write(buffer2, strlen(buffer2));
+                 (int)amt212c_v_position[3]);
+        pc.write(buffer, strlen(buffer));
+        // char buffer2[128];
+        // snprintf(buffer2, sizeof(buffer2), "tire4:pos:%d,goal:%d,power:%d\n",
+        //          (int)tire_power[2],
+        //          (int)tire_pid[2].get_goal(),
+        //          (int)enc[2]);
+        // pc.write(buffer2, strlen(buffer2));
         encoder_mutex.unlock();
         ThisThread::sleep_for(30ms);
     }
