@@ -5,6 +5,8 @@
 #include "amt212c_v.hpp"
 #include "c610.hpp"
 #include "Rs485.h"
+#include "S2460.hpp"
+#include "key.hpp"
 
 // Watchdogタイマーのインクルード
 Watchdog &watchdog = Watchdog::get_instance();
@@ -14,6 +16,8 @@ BufferedSerial pc(USBTX, USBRX, 115200);
 DigitalIn button(BUTTON1);
 DigitalOut led(LED1);
 serial_unit serial(pc);
+
+S2460 esc(D6);
 
 PID steering_position_pid[4] = {
     PID(7.55, 0.0, 0.01, PID::Mode::POSITIONAL),
@@ -58,24 +62,27 @@ int16_t enc[4] = {329, 30, -1476, 632};
 // *** Watchdog用のフラグ追加 ***
 volatile bool watchdog_fed = false;
 
+int esc_power = S2460::PULSE_STOP;
+
 void encoder_update_thread()
 {
     Amt21 *encoders_arr[4] = {&encoder0, &encoder1, &encoder2, &encoder3};
     int current_encoder = 0;
     int debug_counter = 0;
     int error_count[4] = {0, 0, 0, 0};
-    
+
     while (1)
     {
         // Mutexのタイムアウト付きロック
-        if (!rs485_mutex.trylock_for(100ms)) {
+        if (!rs485_mutex.trylock_for(100ms))
+        {
             ThisThread::sleep_for(10ms);
             continue;
         }
-        
+
         bool update_success = encoders_arr[current_encoder]->request_pos();
         int new_position = 0;
-        
+
         if (update_success)
         {
             new_position = encoders_arr[current_encoder]->pos - amt212c_v_error[current_encoder];
@@ -85,9 +92,9 @@ void encoder_update_thread()
         {
             error_count[current_encoder]++;
         }
-        
+
         rs485_mutex.unlock();
-        
+
         if (error_count[current_encoder] > 10)
         {
             error_count[current_encoder] = 0;
@@ -96,17 +103,18 @@ void encoder_update_thread()
 
         if (update_success)
         {
-            if (!encoder_mutex.trylock_for(50ms)) {
+            if (!encoder_mutex.trylock_for(50ms))
+            {
                 ThisThread::sleep_for(10ms);
                 continue;
             }
             amt212c_v_position[current_encoder] = new_position;
             encoder_mutex.unlock();
         }
-        
+
         current_encoder = (current_encoder + 1) % 4;
         ThisThread::sleep_for(30ms);
-        
+
         if (++debug_counter >= 140)
         {
             debug_counter = 0;
@@ -119,11 +127,12 @@ void sensor_thread()
     CANMessage enc_msg;
     while (1)
     {
-        if (!can2_mutex.trylock_for(50ms)) {
+        if (!can2_mutex.trylock_for(50ms))
+        {
             ThisThread::sleep_for(10ms);
             continue;
         }
-        
+
         bool read_success = can2.read(enc_msg, 10);
         can2_mutex.unlock();
 
@@ -138,7 +147,7 @@ void sensor_thread()
                 }
             }
         }
-        
+
         ThisThread::sleep_for(30ms);
     }
 }
@@ -161,7 +170,7 @@ void move_aa(std::string msg)
     msg.erase(0, 2);
     std::vector<double> joys_d = to_numbers(msg);
     std::vector<float> joys(joys_d.begin(), joys_d.end());
-    
+
     bool all_zero = true;
     for (auto &joy : joys)
     {
@@ -174,7 +183,7 @@ void move_aa(std::string msg)
             all_zero = false;
         }
     }
-    
+
     if (all_zero)
     {
         for (int i = 0; i < 4; i++)
@@ -224,7 +233,8 @@ void move_aa(std::string msg)
     }
 
     int current_positions[4];
-    if (!encoder_mutex.trylock_for(50ms)) {
+    if (!encoder_mutex.trylock_for(50ms))
+    {
         return; // タイムアウト時は処理をスキップ
     }
     for (int i = 0; i < 4; i++)
@@ -312,6 +322,21 @@ void move_aa(std::string msg)
     }
 }
 
+void key_thread()
+{
+    while (1)
+    {
+        if (Cross == true)
+        {
+            esc_power = S2460::PULSE_FORWARD_MAX;
+        }
+        else
+        {
+            esc_power = S2460::PULSE_STOP;
+        }
+    }
+}
+
 void pid_thread()
 {
     auto pre_time = HighResClock::now();
@@ -322,12 +347,12 @@ void pid_thread()
         steering_position_pid[i].set_deadband(20.0f);
         tire_pid[i].set_output_limits(-20000, 20000);
     }
-    
+
     while (1)
     {
         auto now_time = HighResClock::now();
         float dt = std::chrono::duration_cast<std::chrono::microseconds>(now_time - pre_time).count() / 1000000.0f;
-        
+
         for (int i = 0; i < 4; i++)
         {
             steering_position_pid[i].set_dt(dt);
@@ -337,7 +362,8 @@ void pid_thread()
         pre_time = now_time;
 
         int local_encoder_positions[4];
-        if (!encoder_mutex.trylock_for(50ms)) {
+        if (!encoder_mutex.trylock_for(50ms))
+        {
             ThisThread::sleep_for(20ms);
             continue;
         }
@@ -364,7 +390,7 @@ void pid_thread()
             DJI.set_power(i + 1, steering_velocity_pid[i].do_pid(DJI.get_rpm(i + 1)));
             tire_power[i] = tire_pid[i].do_pid(enc_filtered[i]);
         }
-        
+
         ThisThread::sleep_for(20ms);
     }
 }
@@ -392,7 +418,7 @@ int main()
 {
     // Watchdogを10秒に延長（より安全なマージン）
     watchdog.start(10000);
-    
+
     pc.set_blocking(false);
 
     serial.start_event_mode();
@@ -408,30 +434,37 @@ int main()
 
     Thread thread(osPriorityNormal, 4096);
     thread.start(serial_read);
-    
+
     Thread encoder_thread_handle(osPriorityHigh, 2048);
     encoder_thread_handle.start(encoder_update_thread);
-    
+
     Thread pid_thread_handle(osPriorityHigh, 4096);
     pid_thread_handle.start(pid_thread);
-    
+
     Thread sensor_thread_handle(osPriorityNormal, 2048);
     sensor_thread_handle.start(sensor_thread);
-    
+
     Thread led_thread_handle(osPriorityLow, 1024);
     led_thread_handle.start(led_thread);
+
+    Thread key_thread_handle(osPriorityNormal, 1024);
+    key_thread_handle.start(key_thread);
+
+    esc.setup();
 
     while (1)
     {
         DJI.send_message();
-        
+
         CANMessage msg(4, (const uint8_t *)tire_power, 8);
-        if (can2_mutex.trylock_for(50ms)) {
+        if (can2_mutex.trylock_for(50ms))
+        {
             can2.write(msg);
             can2_mutex.unlock();
         }
-        
-        if (encoder_mutex.trylock_for(50ms)) {
+
+        if (encoder_mutex.trylock_for(50ms))
+        {
             char buffer[128];
             snprintf(buffer, sizeof(buffer), "steering_positions: W0=%d, W1=%d, W2=%d, W3=%d\n",
                      (int)amt212c_v_position[0],
@@ -440,8 +473,9 @@ int main()
                      (int)amt212c_v_position[3]);
             pc.write(buffer, strlen(buffer));
             encoder_mutex.unlock();
+            esc.write_us(esc_power);
         }
-        
+
         ThisThread::sleep_for(30ms);
     }
 }
